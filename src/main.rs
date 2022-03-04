@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::{RwLock, Arc}, ops::Add, net::TcpListener, thread, io::{Read, Write}};
+use std::{collections::HashMap, sync::{RwLock, Arc, atomic::{AtomicUsize, Ordering}}, ops::Add, net::TcpListener, thread, io::{Read, Write}};
 use chrono::{prelude::*, Duration};
 use crypto_hash::{Algorithm, hex_digest};
 use serde::{Deserialize, Serialize};
@@ -9,6 +9,7 @@ pub const NUMSET: &str = r"8132967540";
 pub const NUM_CHARACTERS: usize = 4096;
 pub const LICENSE_TIMEOUT_DAYS: i64 = 1;
 pub const SALT: &str = r"rA9";
+static COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 //TODO: Implement version salt as the client will tell the server which version it is running
 //TODO: Implement auto-updater like discord and a few other services I use
@@ -392,21 +393,22 @@ fn main() {
                     let mut buf = [0u8; 4096];
                     match stream.read(&mut buf) {
                         Ok(_) => {
-                            println!("Received request.");
                             let raw_text = String::from_utf8_lossy(&buf).to_string();
                             let text = parse_usable_text_from_raw_text(raw_text.to_owned());
                             let credentials = Credentials::from_raw(text);
                             match credentials {
                                 Some(credentials) => {
-                                    println!("{:?}", credentials);
+                                    //println!("{:?}", credentials);
                                     //TODO: Return the hash of the nearest half minute, using as many characters that is needed down to the nano second, even if it's only to second precision/half minute precisions
                                     let now = Utc::now();
                                     let time_closest_minute = format!("{}-{:02}-{:02} {:02}:{:02}:00.000000000 UTC", now.year(), now.month(), now.day(), now.hour(), {if now.second() < 30 { now.minute() } else { now.minute() + 1 }});
                                     let hash_time_closest_minute = hash_string(&time_closest_minute);//not sure if I actually need this to he hashed
                                     let authenticated_response = hash_string(&format!("{}{}{}{}", credentials.salt, credentials.username, hash_time_closest_minute, credentials.password));
                                     if let Err(err) = stream.write(format_http_response(&authenticated_response).as_bytes()) {
-                                        println!("Failed sending response: {}", err);
+                                        //println!("Failed sending response: {}", err);
                                     }
+                                    COUNTER.fetch_add(1, Ordering::Relaxed);
+                                    println!("{}", COUNTER.load(Ordering::Relaxed));
                                 },
                                 None => {
                                     //TODO: Log event, but ultimately ignore
