@@ -1,6 +1,6 @@
-use std::{hash::Hasher, collections::HashMap, sync::{RwLock, Arc}, ops::Add, net::TcpListener, thread, io::{Read, Write}};
+use std::{collections::HashMap, sync::{RwLock, Arc}, ops::Add, net::TcpListener, thread, io::{Read, Write}};
 use chrono::{prelude::*, Duration};
-use seahash::SeaHasher;
+use crypto_hash::{Algorithm, hex_digest};
 use serde::{Deserialize, Serialize};
 //abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789)(*&^%$#@!~
 pub const CHARSET: &str = r"PQb7@&sU9WK*!GwHZxn1eJ#V(2kfF8AC3viuLzomOTD4NR^hyjdtS$rYMIcBq0gl~a%6)p5EX";
@@ -27,9 +27,7 @@ pub fn generate_key(length: usize) -> String {
 }
 
 pub fn hash_string(input: &str) -> String {
-    let mut hasher = SeaHasher::new();
-    hasher.write(input.as_bytes());
-    hasher.finish().to_string()
+    hex_digest(Algorithm::SHA512, input.as_bytes())
 }
 
 pub fn hash_user(hashed_username: &str, hashed_password: &str, server_side_key: &str, issue_date: &DateTime<Utc>) -> String {
@@ -406,11 +404,11 @@ fn main() {
                                     let time_closest_minute = format!("{}-{:02}-{:02} {:02}:{:02}:00.000000000 UTC", now.year(), now.month(), now.day(), now.hour(), {if now.second() < 30 { now.minute() } else { now.minute() + 1 }});
                                     println!("{}", now);
                                     println!("{}", time_closest_minute);
-                                    let hash_time_closest_minute = hash_string(&time_closest_minute);
-                                    let authenticated_response = format!("{}{}{}{}", credentials.salt, credentials.username, hash_time_closest_minute, credentials.password);
-                                    match stream.write(format_http_response(&authenticated_response).as_bytes()) {
-                                        Ok(_) => println!("Response sent."),
-                                        Err(e) => println!("Failed sending response: {}", e),
+                                    let hash_time_closest_minute = hash_string(&time_closest_minute);//not sure if I actually need this to he hashed
+                                    let authenticated_response = hash_string(&format!("{}{}{}{}", credentials.salt, credentials.username, hash_time_closest_minute, credentials.password));
+                                    println!("{}", authenticated_response);
+                                    if let Err(err) = stream.write(format_http_response(&authenticated_response).as_bytes()) {
+                                        println!("Failed sending response: {}", err);
                                     }
                                 },
                                 None => {
