@@ -402,11 +402,8 @@ fn main() {
                                     //TODO: Return the hash of the nearest half minute, using as many characters that is needed down to the nano second, even if it's only to second precision/half minute precisions
                                     let now = Utc::now();
                                     let time_closest_minute = format!("{}-{:02}-{:02} {:02}:{:02}:00.000000000 UTC", now.year(), now.month(), now.day(), now.hour(), {if now.second() < 30 { now.minute() } else { now.minute() + 1 }});
-                                    println!("{}", now);
-                                    println!("{}", time_closest_minute);
                                     let hash_time_closest_minute = hash_string(&time_closest_minute);//not sure if I actually need this to he hashed
                                     let authenticated_response = hash_string(&format!("{}{}{}{}", credentials.salt, credentials.username, hash_time_closest_minute, credentials.password));
-                                    println!("{}", authenticated_response);
                                     if let Err(err) = stream.write(format_http_response(&authenticated_response).as_bytes()) {
                                         println!("Failed sending response: {}", err);
                                     }
