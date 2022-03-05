@@ -41,12 +41,9 @@ pub fn hash_user(hashed_username: &str, hashed_password: &str, server_side_key: 
     Three = 3,
 } */
 
-pub fn validate_license(current_licenses: Arc<RwLock<HashMap<String, DateTime<Utc>>>>, current_users: Arc<RwLock<HashMap<String, User>>>, username: &str, password: &str) -> bool {
-    let hashed_username = hash_string(username);
-    let hashed_password = hash_string(password);
-    
+pub fn validate_license(current_licenses: Arc<RwLock<HashMap<String, DateTime<Utc>>>>, current_users: Arc<RwLock<HashMap<String, User>>>, hashed_username: &str, hashed_password: &str) -> bool {    
     //exits early if credentials don't exist/match
-    match current_users.read().unwrap().get(&hashed_username) {
+    match current_users.read().unwrap().get(hashed_username) {
         Some(saved_user) => {
             if saved_user.hashed_password != hashed_password {
                 return false;
@@ -96,7 +93,7 @@ pub struct License {
     _expiry_date: DateTime<Utc>,
 }
 
-#[derive(Hash)]
+#[derive(Hash, Debug)]
 pub struct User {
     pub hashed_username: String,
     pub hashed_password: String,
@@ -117,6 +114,16 @@ impl User {
             //token: generate_key(NUM_CHARACTERS),
         }
     }
+
+    pub fn new_from_hashed(hashed_username: &str, hashed_password: &str) -> Self {
+        Self {
+            hashed_username: hashed_username.to_string(),
+            hashed_password: hashed_password.to_string(),
+            server_side_key: generate_key(NUM_CHARACTERS),
+            issue_date: Utc::now(),
+            //token: generate_key(NUM_CHARACTERS),
+        }
+    }
 }
 
 pub fn create_user(current_users: Arc<RwLock<HashMap<String, User>>>, username: &str, password: &str) {
@@ -124,16 +131,24 @@ pub fn create_user(current_users: Arc<RwLock<HashMap<String, User>>>, username: 
     current_users.write().unwrap().insert(user.hashed_username.clone(), user);
 }
 
-pub fn validate_user(current_users: Arc<RwLock<HashMap<String, User>>>, username: &str, password: &str) -> bool {
-    match current_users.read().unwrap().get(&hash_string(&username)) {
-        Some(saved_user) => {
-            if saved_user.hashed_password != hash_string(&password) {
-                return false;
+pub fn validate_user(current_users: Arc<RwLock<HashMap<String, User>>>, version_salt_registry: Arc<RwLock<HashMap<String, String>>>, hashed_username: &str, hashed_password: &str, version: &str) -> bool {
+    match version_salt_registry.read().unwrap().get(version) {
+        Some(version_salt) => {
+            match current_users.read().unwrap().get(hashed_username) {
+                Some(saved_user) => {
+                    println!("A{}", format!("{}{}{}", version_salt, saved_user.hashed_password, version_salt));
+                    println!("B{}", hashed_password);
+                    println!("C{}", saved_user.hashed_password);
+                    if hash_string(&format!("{}{}{}", version_salt, saved_user.hashed_password, version_salt)) != hashed_password {
+                        return false;
+                    }
+                },
+                None => {
+                    return false;
+                },
             }
         },
-        None => {
-            return false;
-        },
+        None => return false,
     }
     true
 }
@@ -309,7 +324,8 @@ pub fn format_http_response(text_message: &str) -> String {
 pub struct Credentials {
     username: String,
     password: String,
-    salt: String,
+    client_generated_salt: String,
+    version: String,
 }
 
 impl Credentials {
@@ -335,23 +351,35 @@ pub fn parse_usable_text_from_raw_text(raw_text: String) -> String {
 }
 
 fn main() {
+    //println!("{}", generate_key(30));
+    let version_salt_registry: Arc<RwLock<HashMap<String, String>>> = Arc::new(RwLock::new(HashMap::new()));
+    version_salt_registry.write().unwrap().insert("1.38".to_string(), "dvR9mEs!Wuo9Gje(!cMHDzLhi%8^WM".to_string());
+
     //NOTE: Shouldn't use seahash, I need a fast cryptographic hashing algorithm thingo
     let current_licenses: Arc<RwLock<HashMap<String, DateTime<Utc>>>> = Arc::new(RwLock::new(HashMap::new()));
     let current_users: Arc<RwLock<HashMap<String, User>>> = Arc::new(RwLock::new(HashMap::new()));
 
+    let me_hashed = hash_string("me");
+    let you_hashed = hash_string("you");
+    let right_password_hashed = hash_string("Password123");
+    let wrong_password_hashed = hash_string("Password1234");
+    let right_password_hashed_salted = hash_string(&format!("dvR9mEs!Wuo9Gje(!cMHDzLhi%8^WM{}dvR9mEs!Wuo9Gje(!cMHDzLhi%8^WM", hash_string("Password123")));
+    let wrong_password_hashed_salted = hash_string(&format!("dvR9mEs!Wuo9Gje(!cMHDzLhi%8^WM{}dvR9mEs!Wuo9Gje(!cMHDzLhi%8^WM", hash_string("Password1234")));
     create_user(current_users.clone(), "me", "Password123");
+    assert!( generate_license(current_licenses.clone(), current_users.clone(), &User::new_from_hashed(&me_hashed, &right_password_hashed)));
+    assert!(!generate_license(current_licenses.clone(), current_users.clone(), &User::new_from_hashed(&me_hashed, &wrong_password_hashed)));
+    assert!(!generate_license(current_licenses.clone(), current_users.clone(), &User::new_from_hashed(&you_hashed, &right_password_hashed)));
+    //println!("{}", me_hashed);
+    //println!("{}", right_password_hashed);
+    //println!("{:?}", current_users.read().unwrap().get(&me_hashed).unwrap());
+    //println!("{:?}", current_users.read().unwrap());
+    assert!( validate_user(current_users.clone(), version_salt_registry.clone(), &me_hashed, &right_password_hashed_salted, "1.38"));
+    assert!(!validate_user(current_users.clone(), version_salt_registry.clone(), &me_hashed, &wrong_password_hashed_salted, "1.38"));
+    assert!(!validate_user(current_users.clone(), version_salt_registry.clone(), &you_hashed, &right_password_hashed_salted, "1.38"));
 
-    assert!( generate_license(current_licenses.clone(), current_users.clone(), &User::new("me",  "Password123")));
-    assert!(!generate_license(current_licenses.clone(), current_users.clone(), &User::new("me",  "Password1234")));
-    assert!(!generate_license(current_licenses.clone(), current_users.clone(), &User::new("you", "Password123")));
-
-    assert!( validate_user(current_users.clone(), "me",  "Password123"));
-    assert!(!validate_user(current_users.clone(), "me",  "Password1234"));
-    assert!(!validate_user(current_users.clone(), "you", "Password123"));
-
-    assert!( validate_license(current_licenses.clone(), current_users.clone(), "me",  "Password123"));
-    assert!(!validate_license(current_licenses.clone(), current_users.clone(), "me",  "Password1234"));
-    assert!(!validate_license(current_licenses.clone(), current_users.clone(), "you", "Password123"));
+    assert!( validate_license(current_licenses.clone(), current_users.clone(), &me_hashed, &right_password_hashed));
+    assert!(!validate_license(current_licenses.clone(), current_users.clone(), &me_hashed, &wrong_password_hashed));
+    assert!(!validate_license(current_licenses.clone(), current_users.clone(), &you_hashed, &right_password_hashed));
 
 
     //use the username and password to generate the key the server actually uses to start, the server will just use that key to start
@@ -389,6 +417,8 @@ fn main() {
     for stream in listener.incoming() {
         match stream {
             Ok(mut stream) => {
+                let inner_current_users = current_users.clone();
+                let inner_version_salt_registry = version_salt_registry.clone();
                 thread::spawn(move || {
                     let mut buf = [0u8; 4096];
                     match stream.read(&mut buf) {
@@ -398,17 +428,24 @@ fn main() {
                             let credentials = Credentials::from_raw(text);
                             match credentials {
                                 Some(credentials) => {
-                                    //println!("{:?}", credentials);
+                                    println!("{:?}", credentials);
                                     //TODO: Return the hash of the nearest half minute, using as many characters that is needed down to the nano second, even if it's only to second precision/half minute precisions
                                     let now = Utc::now();
                                     let time_closest_minute = format!("{}-{:02}-{:02} {:02}:{:02}:00.000000000 UTC", now.year(), now.month(), now.day(), now.hour(), {if now.second() < 30 { now.minute() } else { now.minute() + 1 }});
                                     let hash_time_closest_minute = hash_string(&time_closest_minute);//not sure if I actually need this to he hashed
-                                    let authenticated_response = hash_string(&format!("{}{}{}{}", credentials.salt, credentials.username, hash_time_closest_minute, credentials.password));
-                                    if let Err(err) = stream.write(format_http_response(&authenticated_response).as_bytes()) {
-                                        //println!("Failed sending response: {}", err);
+                                    //get user profile from username
+                                    let response;
+                                    if validate_user(inner_current_users, inner_version_salt_registry.clone(), &credentials.username,  &credentials.password, &credentials.version) {
+                                        response = hash_string(&format!("{}{}{}{}", credentials.client_generated_salt, credentials.username, hash_time_closest_minute, credentials.password))
+                                    } else {
+                                        response = "Rejected.".to_string();
+                                    }
+                                    if let Err(err) = stream.write(format_http_response(&response).as_bytes()) {
+                                        println!("Failed sending response: {}", err);
                                     }
                                     COUNTER.fetch_add(1, Ordering::Relaxed);
                                     println!("{}", COUNTER.load(Ordering::Relaxed));
+                                    
                                 },
                                 None => {
                                     //TODO: Log event, but ultimately ignore
